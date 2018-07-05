@@ -1,0 +1,126 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+data1 = r'C:\Users\zheng\Desktop\Titanic\train.csv'
+data2 = r'C:\Users\zheng\Desktop\Titanic\test.csv'
+train=pd.read_csv(data1)
+test=pd.read_csv(data2)
+train.info()
+test.info()
+test.head()
+
+train=train.drop(['PassengerId','Cabin'],axis=1)
+test=test.drop('Cabin',axis=1)
+from collections import Counter
+print(Counter(list(train['Embarked'])))
+train['Embarked'].fillna('S',inplace=True)
+
+#ONEHOT encode
+from sklearn.preprocessing import LabelEncoder,OneHotEncoder
+
+#Sex
+le_sex=LabelEncoder().fit(train['Sex'])
+sex_label=le_sex.transform(train['Sex'])
+sex_label_test=le_sex.transform(test['Sex'])
+oh_sex=OneHotEncoder(sparse=False).fit(sex_label.reshape(-1,1))
+sex_ohe=oh_sex.transform(sex_label.reshape(-1,1))
+sex_ohe_test=oh_sex.transform(sex_label_test.reshape(-1,1))
+train['Sex_0']=sex_ohe[:,0]
+train['Sex_1']=sex_ohe[:,1]
+test['Sex_0']=sex_ohe_test[:,0]
+test['Sex_1']=sex_ohe_test[:,1]
+
+#Embarked
+le_embarked=LabelEncoder().fit(train['Embarked'])
+embarked_label=le_embarked.transform(train['Embarked'])
+embarked_label_test=le_embarked.transform(test['Embarked'])
+oh_embarked=OneHotEncoder(sparse=False).fit(embarked_label.reshape(-1,1))
+embarked_ohe=oh_embarked.transform(embarked_label.reshape(-1,1))
+embarked_ohe_test=oh_embarked.transform(embarked_label_test.reshape(-1,1))
+train['Embarked_0']=embarked_ohe[:,0]
+train['Embarked_1']=embarked_ohe[:,1]
+train['Embarked_2']=embarked_ohe[:,2]
+test['Embarked_0']=embarked_ohe_test[:,0]
+test['Embarked_1']=embarked_ohe_test[:,1]
+test['Embarked_2']=embarked_ohe_test[:,2]
+
+
+#Name 
+def replace_name(x):
+    if 'Miss' in x:
+        return 'Miss'
+    elif 'Mrs' in x:
+        return 'Mrs'
+    else:
+        return 'Mr'
+train['Name']=train['Name'].apply(lambda x:replace_name(x))
+test['Name']=test['Name'].apply(lambda x:replace_name(x))
+le_name=LabelEncoder().fit(train['Name'])
+name_label=le_name.transform(train['Name'])
+name_label_test=le_name.transform(test['Name'])
+oh_name=OneHotEncoder(sparse=False).fit(name_label.reshape(-1,1))
+name_ohe=oh_name.transform(name_label.reshape(-1,1))
+name_ohe_test=oh_name.transform(name_label_test.reshape(-1,1))
+train['Name_0']=name_ohe[:,0]
+train['Name_1']=name_ohe[:,1]
+train['Name_2']=name_ohe[:,2]
+test['Name_0']=name_ohe_test[:,0]
+test['Name_1']=name_ohe_test[:,1]
+test['Name_2']=name_ohe_test[:,2]
+
+train=train.drop(['Name','Embarked','Sex'],axis=1)
+test=test.drop(['Name','Embarked','Sex'],axis=1)
+
+#Normalization
+from sklearn.preprocessing import StandardScaler,scale
+train['Pclass_scale']=StandardScaler().fit_transform(train['Pclass'].reshape(-1,1))  
+train['SibSp_scale']=StandardScaler().fit_transform(train['SibSp'].reshape(-1,1))
+train['Parch_scale']=StandardScaler().fit_transform(train['Parch'].reshape(-1,1))
+train['Fare_scale']=StandardScaler().fit_transform(train['Fare'].reshape(-1,1))
+test['Pclass_scale']=StandardScaler().fit_transform(test['Pclass'].reshape(-1,1))  
+test['SibSp_scale']=StandardScaler().fit_transform(test['SibSp'].reshape(-1,1))
+test['Parch_scale']=StandardScaler().fit_transform(test['Parch'].reshape(-1,1))
+test.loc[test['Fare'].isnull(),'Fare']=test['Fare'].mean()
+test['Fare_scale']=StandardScaler().fit_transform(test['Fare'].reshape(-1,1))
+train=train.drop(['Pclass','SibSp','Parch','Fare'],axis=1)
+test=test.drop(['Pclass','SibSp','Parch','Fare'],axis=1)
+
+#Age
+from sklearn.ensemble import RandomForestRegressor
+def set_missing_age(x):
+    data=x[['Age','SibSp_scale','Parch_scale','Pclass_scale','Fare_scale','Name_0','Name_1','Name_2','Sex_0','Sex_1']]
+    known_age=data[data['Age'].notnull()].as_matrix()
+    unknown_age=data[data['Age'].isnull()].as_matrix()
+    data_y=known_age[:,0]
+    data_x=known_age[:,1:]
+    rf=RandomForestRegressor(random_state=0,n_estimators=200,n_jobs=-1)
+    rf.fit(data_x,data_y)
+    pre=rf.predict(unknown_age[:,1:])
+    x.loc[x.Age.isnull(),'Age']=pre
+    return x,rf
+train,rf=set_missing_age(train)
+test,rf_test=set_missing_age(test)
+
+train['Age_scale']=StandardScaler().fit_transform(train['Age'].reshape(-1,1))
+test['Age_scale']=StandardScaler().fit_transform(test['Age'].reshape(-1,1))
+train_y=train['Survived'].as_matrix()
+train_x=train.drop(['Ticket','Survived'],axis=1).as_matrix()
+test_x=test.drop(['Ticket','PassengerId'],axis=1).as_matrix()
+
+#train
+from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split
+x_tr,x_te,y_tr,y_te=train_test_split(train_x,train_y,test_size=0.3,random_state=0)
+bst=XGBClassifier(max_depth=8,learning_rate=0.05,early_stop=10,n_estimators=1000,silent=True,objective='binary:logistic')
+bst.fit(x_tr,y_tr)
+pre=bst.predict(x_te)
+from sklearn.metrics import accuracy_score
+acc=accuracy_score(y_te,pre)
+acc
+
+#Test predict
+pre_test=bst.predict(test_x).astype(np.int32)
+result=pd.DataFrame({'PassengerId':test['PassengerId'].as_matrix(),'Survived':pre_test})
+result.to_csv(r'C:\Users\zheng\Desktop\Titanic\submission.csv',index=False)  
